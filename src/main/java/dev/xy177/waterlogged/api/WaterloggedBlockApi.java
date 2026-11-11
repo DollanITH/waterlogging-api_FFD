@@ -640,16 +640,33 @@ public final class WaterloggedBlockApi {
         if (world == null || pos == null) {
             return false;
         }
-        IBlockState next = isWaterlogged(world, pos)
+        boolean wasWaterlogged = isWaterlogged(world, pos);
+        IBlockState next = wasWaterlogged
                 ? getReplacementState(world, pos, removedState) : replacement;
         if (next == null) {
             return false;
         }
+        // A static vanilla source has no pending update after its host is
+        // harvested. Restore the dynamic form so it can spread on the next
+        // fluid tick, just as a newly placed source does.
+        if (wasWaterlogged && next.getBlock() == Blocks.WATER) {
+            next = Blocks.FLOWING_WATER.getDefaultState()
+                    .withProperty(BlockLiquid.LEVEL, next.getValue(BlockLiquid.LEVEL));
+        } else if (wasWaterlogged && next.getBlock() == Blocks.LAVA) {
+            next = Blocks.FLOWING_LAVA.getDefaultState()
+                    .withProperty(BlockLiquid.LEVEL, next.getValue(BlockLiquid.LEVEL));
+        }
         boolean changed = setBlockStateWithoutWaterloggingHook(world, pos, next, flags);
         if (changed) {
             recordContainedFluid(world, pos, null);
+            Fluid restored = getFluidForBlock(next.getBlock());
+            if (!world.isRemote && restored != null) {
+                world.scheduleUpdate(pos, next.getBlock(), 1);
+                world.notifyNeighborsOfStateChange(pos, next.getBlock(), false);
+            }
             if (world.isRemote) {
-                world.markBlockRangeForRenderUpdate(pos, pos);
+                world.markBlockRangeForRenderUpdate(pos.add(-1, -1, -1),
+                        pos.add(1, 1, 1));
             }
         }
         return changed;
