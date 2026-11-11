@@ -1,0 +1,29 @@
+{
+  "required": true,
+  "package": "dev.xy177.waterlogged.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "target": "@env(DEFAULT)",
+  "mixins": [
+    "BlockStateContainerMixin",
+    "BlockDynamicLiquidMixin",
+    "BlockFluidBaseMixin",
+    "BlockFluidClassicMixin",
+    "BlockFenceMixin",
+    "BlockMixin",
+    "BlockLiquidMixin",
+    "ChunkMixin",
+    "EntityMixin",
+    "ItemBlockMixin",
+    "ItemShearsMixin",
+    "WorldMixin",
+    "WorldServerMixin"
+  ],
+  "client": [
+    "RenderGlobalMixin",
+    "BlockFluidRendererMixin",
+    "BlockModelShapesMixin",
+    "StateMapperMixin"
+  ],
+  "server": [],
+  "minVersion": "0.8.7"
+}

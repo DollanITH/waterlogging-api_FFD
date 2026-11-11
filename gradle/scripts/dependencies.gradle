@@ -1,0 +1,83 @@
+repositories {
+    // Temporary local mirror used only for the offline runtime verification in this workspace.
+    maven {
+        name = 'LocalRuntimeVerification'
+        url = uri("${rootProject.projectDir}/run/local-maven")
+    }
+    // Central artifacts come from Aliyun's mirror and everything else from the jsdu mirror that also backs
+    // repo.cleanroommc.com (forge, mcp and Outlands' releases are all proxied there). Both are moved to the front after
+    // this block, because the Unimined plugin appends its own repositories while `unimined.minecraft {}` is evaluated.
+    maven {
+        name = 'CentralMirror'
+        url = 'https://maven.aliyun.com/repository/central/'
+    }
+    maven {
+        name = 'OutlandsMirror'
+        url = 'https://nexus.jsdu.cn/repository/'
+    }
+    maven {
+        name = 'CurseMaven'
+        url = 'https://cursemaven.com'
+    }
+    maven {
+        name = 'CleanroomCurseMaven'
+        url = 'https://curse.cleanroommc.com'
+    }
+    maven {
+        name = 'Modrinth'
+        url = 'https://api.modrinth.com/maven'
+    }
+    mavenCentral()
+
+    // Repository order is declaration order in Gradle, and the mirrors are declared before the plugin adds its own.
+    ['CentralMirror', 'OutlandsMirror'].reverseEach { name ->
+        def mirror = repositories.findByName(name)
+        repositories.remove(mirror)
+        repositories.addFirst(mirror)
+    }
+}
+
+dependencies {
+    if (enable_lwjglx.toBoolean()) {
+        compileOnly "com.cleanroommc:lwjglx:1.0.0"
+    }
+
+    // A bundled jar is wrapped in `contained(...)`: Unimined then copies that same artifact to META-INF/libraries and
+    // states it in the mcmod.info jar section. Wrapping the declaration rather than naming it again elsewhere is what
+    // keeps the packed version the one the code was compiled against. What the entry is treated as at runtime follows
+    // from the configuration it is declared in, so a `modImplementation contained(...)` is bundled as a mod and this
+    // one as a library.
+    // Minecraft supplies Gson; this mod bundles no extra library.
+    // implementation contained('com.google.code.gson:gson:2.13.2')
+
+    // Example - Dependency descriptor:
+    // 'com.google.code.gson:gson:2.8.6' << group: com.google.code.gson, name:gson, version:2.8.6
+    // 'group:name:version:classifier' where classifier is optional
+
+    // Example - CurseMaven dependencies:
+    // 'curse.maven:had-enough-items-557549:4543375' << had-enough-items = project slug, 557549 = project id, 4543375 = file id
+    // Full documentation: https://cursemaven.com/
+
+    // Example - Modrinth dependencies:
+    // 'maven.modrinth:jei:4.16.1.1000' << jei = project name, 4.16.1.1000 = file version
+    // Full documentation: https://docs.modrinth.com/docs/tutorials/maven/
+
+    // Common dependency types (configuration):
+    // implementation = dependency available at both compile time and runtime
+    // runtimeOnly = runtime dependency
+    // compileOnly = compile time dependency
+    // annotationProcessor = annotation processing dependencies
+    // contain = bundle a dependency jar into the final artifact; wrap the declaration in `contained(...)` (see above)
+    // shadow = bundle dependencies into shadow output artifact (relocation configurable in shadowJar task)
+    // modImplementation = mod dependency available at both compile time and runtime
+    // modCompileOnly = mod dependency available only at compile time
+    // modLibrary = won't be remap but will be forced injected into classpath later
+
+    // Transitive dependencies:
+    // (Dependencies that your dependency depends on)
+    // If you wish to exclude transitive dependencies in the described dependencies
+    // Use a closure as such:
+    // implementation ('com.google.code.gson:gson:2.8.6') {
+    //     transitive = false
+    // }
+}

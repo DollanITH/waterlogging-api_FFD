@@ -1,0 +1,45 @@
+pluginManagement {
+    repositories {
+        // Proxies the hosts below, so a plugin lookup does not wait on a slow origin. Unimined adds the same mirror to
+        // the project's repositories itself, which is what makes build-time downloads use it too.
+        maven {
+            name = 'OutlandsMirror'
+            url = 'https://nexus.jsdu.cn/repository/'
+        }
+        maven {
+            name = 'Outlands'
+            url = 'https://maven.outlands.top/releases/'
+        }
+        gradlePluginPortal() {
+            content {
+                excludeGroup('org.apache.logging.log4j')
+            }
+        }
+        mavenCentral()
+        maven {
+            url = 'https://maven.minecraftforge.net/'
+        }
+        maven {
+            url = 'https://maven.fabricmc.net/'
+        }
+        maven {
+            url = 'https://maven.wagyourtail.xyz/releases'
+        }
+        maven {
+            url = 'https://maven.arcseekers.com/releases'
+        }
+
+        maven {
+            url = 'https://maven.wagyourtail.xyz/snapshots'
+        }
+    }
+}
+
+plugins {
+    // Automatic toolchain provisioning
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+// Due to an IntelliJ bug, this has to be done
+// rootProject.name = archives_base_name
+rootProject.name = rootProject.projectDir.getName()

@@ -1,0 +1,249 @@
+plugins {
+    id 'java'
+    id 'java-library'
+    id 'maven-publish'
+    id 'com.gradleup.shadow' version '9.6.1'
+    id 'org.jetbrains.gradle.plugin.idea-ext' version '1.4.1'
+    id 'top.outlands.unimined' version '1.4.47'
+    id 'net.kyori.blossom' version '2.2.0'
+}
+
+import org.jetbrains.gradle.ext.Gradle
+
+ext {
+    //noinspection GroovyAssignabilityCheck
+    // Where an access transformer sits inside the jar, relative to META-INF/: the loader opens exactly that path, and
+    // the jar section below declares the same string. The file itself lives at the same path under src/main/resources.
+    access_transformer_locations = "${mod_id}_at.cfg"
+}
+
+// The property has always been allowed to name more than one file, and both the jar section and the processResources
+// placement have to agree on the list, so it is split once, here.
+def accessTransformerLocations = access_transformer_locations.trim().split('\\s+').findAll { !it.isBlank() }
+
+version = mod_version
+group = root_package
+
+base {
+    archivesName = mod_id
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+    if (generate_sources_jar.toBoolean()) {
+        withSourcesJar()
+    }
+    if (generate_javadocs_jar.toBoolean()) {
+        withJavadocJar()
+    }
+}
+
+configurations {
+    modCompileOnly
+    compileOnly.extendsFrom(modCompileOnly)
+    modRuntimeOnly
+    runtimeOnly.extendsFrom(modRuntimeOnly)
+}
+
+apply from: 'gradle/scripts/dependencies.gradle'
+
+repositories {
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = 'McpMappingMirror'
+                url = 'https://nexus.jsdu.cn/repository/'
+                metadataSources { artifact() }
+            }
+        }
+        filter { includeGroup('de.oceanlabs.mcp') }
+    }
+}
+
+def remapTaskName = enable_shadow.toBoolean() ? "remapShadowJar" : "remapJar"
+
+//noinspection GroovyAssignabilityCheck
+unimined.minecraft {
+    version "1.12.2"
+
+    mappings {
+        mcp("stable", "39-1.12")
+    }
+
+    outlands {
+        if (use_access_transformer.toBoolean()) {
+            // A development run applies one access transformer - Unimined rewrites Minecraft against it - while the jar
+            // can carry several. A second location therefore widens classes only in the built mod.
+            accessTransformer "src/main/resources/${accessTransformerLocations[0]}"
+        }
+        // The jar-level facts live in the mcmod.info `jar` section, not in the manifest. Every value here comes from a
+        // build property, which is why it belongs to the build: keeping it in a metadata file would mean two places to
+        // keep in step.
+        jarMetadata {
+            license mod_license
+            if (is_coremod.toBoolean()) {
+                coreMod coremod_plugin_class_name
+                alsoMod coremod_includes_mod.toBoolean()
+            }
+            if (use_access_transformer.toBoolean()) {
+                at(*accessTransformerLocations)
+            }
+        }
+        loader "2026.11.03-2"
+        runs.all {
+            systemProperty("outlands.dev.mixin", "${mod_id}.mixin.json")
+            args += ['--username', minecraft_username, '--accessToken', '0']
+            def extraArgs = extra_jvm_args
+            if (extraArgs != null && !extraArgs.trim().isEmpty()) {
+                jvmArgs += extraArgs.split { "\\s+" }.toList()
+            }
+            if (enable_foundation_debug.toBoolean()) {
+                systemProperty("foundation.dump", "true")
+                systemProperty("foundation.verbose", "true")
+            }
+            if (is_coremod.toBoolean()) {
+                systemProperty("fml.coreMods.load", coremod_plugin_class_name)
+            }
+            return
+        }
+    }
+
+    defaultRemapJar = false
+    
+    String jarTaskName = enable_shadow.toBoolean() ? "shadowJar" : "jar"
+    
+    remap(tasks.named(jarTaskName).get()) {
+        mixinRemap {
+            enableBaseMixin()
+            enableMixinExtra()
+        }
+    }
+
+    mods {
+        remap(configurations.modCompileOnly)
+        remap(configurations.modRuntimeOnly)
+    }
+}
+
+dependencies {
+    if (use_asset_mover.toBoolean()) {
+        implementation "com.cleanroommc:assetmover:${asset_mover_version}"
+    }
+    if (enable_junit_testing.toBoolean()) {
+        testImplementation 'org.junit.jupiter:junit-jupiter:6.0.3'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+}
+
+processResources {
+    // The loader opens an access transformer as `META-INF/<declared path>`, so the declared location decides where the
+    // file lands: a name pattern (`_at.cfg`) would stop matching the moment someone sets a custom location, and the jar
+    // would then declare an entry it does not contain.
+    if (use_access_transformer.toBoolean()) {
+        accessTransformerLocations.each { location ->
+            filesMatching(location) { it.path = "META-INF/${it.path}" }
+        }
+    }
+}
+
+sourceSets {
+    main {
+        blossom {
+            javaSources {
+                property('mod_id', mod_id)
+                property('mod_name', mod_name)
+                property('mod_version', mod_version)
+                property('package', "${root_package}.${mod_id}")
+            }
+            resources {
+                property('mod_id', mod_id)
+                property('mod_name', mod_name)
+                property('mod_version', mod_version)
+                property('mod_description', mod_description)
+                property('mod_authors', mod_authors.toString().split(',').findAll { !it.isBlank() }.collect { "\"${it.strip()}\"" }.join(', '))
+                property('mod_credits', mod_credits)
+                property('mod_url', mod_url)
+                property('mod_update_json', mod_update_json)
+                property('mod_logo_path', mod_logo_path)
+                property('mod_issue_tracker', mod_issue_tracker)
+            }
+        }
+    }
+}
+
+idea {
+    module {
+        inheritOutputDirs = true
+    }
+    project {
+        settings {
+            runConfigurations {
+                '1. Build'(Gradle) {
+                    taskNames = ["build"]
+                }
+                '2. Run Client'(Gradle) {
+                    taskNames = ["runClient"]
+                }
+                '3. Run Server'(Gradle) {
+                    taskNames = ["runServer"]
+                }
+            }
+            compiler.javac {
+                afterEvaluate {
+                    javacAdditionalOptions = '-encoding utf8'
+                    moduleJavacAdditionalOptions = [
+                            (project.name + '.main'): tasks.compileJava.options.compilerArgs.collect { "\"${it}\"" }.join(' ')
+                    ]
+                }
+            }
+            taskTriggers {
+                beforeSync tasks.named("genSources")
+            }
+        }
+    }
+}
+
+if (!enable_shadow.toBoolean()) {
+    shadowJar.enabled = false
+}
+
+compileJava {
+    sourceCompatibility = targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+    archiveClassifier = 'dev'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    finalizedBy(tasks.named(remapTaskName).get())
+}
+
+shadowJar {
+    //noinspection GroovyAssignabilityCheck,GroovyAccessibility
+    configurations = [project.configurations.shadow]
+    archiveClassifier = "shadow"
+}
+
+compileTestJava {
+    sourceCompatibility = targetCompatibility = JavaVersion.VERSION_25
+}
+
+test {
+    useJUnitPlatform()
+    javaLauncher.set(javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    })
+    if (show_testing_output.toBoolean()) {
+        testLogging {
+            showStandardStreams = true
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+apply from: 'gradle/scripts/publishing.gradle'
+apply from: 'gradle/scripts/extra.gradle'
