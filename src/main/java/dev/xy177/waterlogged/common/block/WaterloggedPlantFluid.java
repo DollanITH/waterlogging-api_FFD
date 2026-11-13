@@ -1,9 +1,12 @@
 package dev.xy177.waterlogged.common.block;
 
 import java.lang.reflect.Field;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Queue;
 import java.util.Set;
 import java.util.Map;
 import java.util.LinkedHashMap;
@@ -12,6 +15,8 @@ import java.util.TreeSet;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockDoor;
 import net.minecraft.block.BlockLiquid;
+import net.minecraft.block.BlockSponge;
+import net.minecraft.block.BlockTrapDoor;
 import net.minecraft.block.BlockLeaves;
 import net.minecraft.block.properties.IProperty;
 import net.minecraft.block.material.Material;
@@ -59,6 +64,8 @@ public final class WaterloggedPlantFluid {
             new BooleanProperty("water_east_visible");
     public static final IUnlistedProperty<Boolean> WATER_DOWN_VISIBLE =
             new BooleanProperty("water_down_visible");
+    public static final IUnlistedProperty<Float> WATER_FLOW_ANGLE =
+            new FloatProperty("water_flow_angle", -1000.0F, 4.0F);
     public static final IUnlistedProperty<Float> WATER_NORTH_WEST =
             new FloatProperty("water_north_west");
     public static final IUnlistedProperty<Float> WATER_SOUTH_WEST =
@@ -67,8 +74,6 @@ public final class WaterloggedPlantFluid {
             new FloatProperty("water_south_east");
     public static final IUnlistedProperty<Float> WATER_NORTH_EAST =
             new FloatProperty("water_north_east");
-    public static final IUnlistedProperty<Float> WATER_FLOW_ANGLE =
-            new FloatProperty("water_flow_angle", -1000.0F, 4.0F);
     public static final IUnlistedProperty<Float> WATER_MODEL_OFFSET_X =
             new FloatProperty("water_model_offset_x", -1.0F, 1.0F);
     public static final IUnlistedProperty<Float> WATER_MODEL_OFFSET_Y =
@@ -185,8 +190,9 @@ public final class WaterloggedPlantFluid {
         return new IUnlistedProperty<?>[] {
                 WATER_ABOVE, WATER_NORTH_VISIBLE, WATER_SOUTH_VISIBLE,
                 WATER_WEST_VISIBLE, WATER_EAST_VISIBLE, WATER_DOWN_VISIBLE,
+                WATER_FLOW_ANGLE,
                 WATER_NORTH_WEST, WATER_SOUTH_WEST,
-                WATER_SOUTH_EAST, WATER_NORTH_EAST, WATER_FLOW_ANGLE,
+                WATER_SOUTH_EAST, WATER_NORTH_EAST,
                 WATER_MODEL_OFFSET_X, WATER_MODEL_OFFSET_Y, WATER_MODEL_OFFSET_Z,
                 CONTAINED_FLUID};
     }
@@ -262,11 +268,8 @@ public final class WaterloggedPlantFluid {
                 .withProperty(CONTAINED_FLUID, fluid.getName());
     }
 
-    /** Match BlockLiquid's horizontal flow vector before choosing the top sprite. */
     private static float getFlowAngle(IBlockAccess world, BlockPos pos, Fluid fluid) {
-        if (fluid != FluidRegistry.WATER) {
-            return -1000.0F;
-        }
+        if (fluid != FluidRegistry.WATER) return -1000.0F;
         int current = fluidLevel(WaterloggedBlockApi.getFluidState(world, pos));
         if (current >= 8) current = 0;
         double x = 0.0D;
@@ -274,7 +277,8 @@ public final class WaterloggedPlantFluid {
         for (EnumFacing side : EnumFacing.Plane.HORIZONTAL) {
             BlockPos neighbor = pos.offset(side);
             if (world.getBlockState(pos).isSideSolid(world, pos, side)
-                    || world.getBlockState(neighbor).isSideSolid(world, neighbor, side.getOpposite())) continue;
+                    || world.getBlockState(neighbor).isSideSolid(
+                    world, neighbor, side.getOpposite())) continue;
             int difference;
             if (containsFluid(world, neighbor, fluid)) {
                 int level = fluidLevel(WaterloggedBlockApi.getFluidState(world, neighbor));
@@ -285,9 +289,7 @@ public final class WaterloggedPlantFluid {
                 int level = fluidLevel(WaterloggedBlockApi.getFluidState(world, neighbor.down()));
                 if (level >= 8) level = 0;
                 difference = level - (current - 8);
-            } else {
-                continue;
-            }
+            } else continue;
             x += side.getXOffset() * difference;
             z += side.getZOffset() * difference;
         }
@@ -443,6 +445,13 @@ public final class WaterloggedPlantFluid {
         if (world.isRemote || !world.isAreaLoaded(pos, 4)) {
             return;
         }
+        // A wet host receives its own scheduled update even when no neighbour
+        // update is emitted.  Let nearby dry sponges consume that host from
+        // this authoritative state transition, matching the requested
+        // host-driven absorption lifecycle.
+        if (absorbWaterloggedByNearbySponge(world, pos)) {
+            return;
+        }
         if (!WaterloggedBlockApi.isWaterlogged(world, pos)) {
             if (!tryFormWaterSource(world, pos, state)) {
                 return;
@@ -451,12 +460,100 @@ public final class WaterloggedPlantFluid {
         }
 
         Fluid contained = WaterloggedBlockApi.getContainedFluid(world, pos);
+        // A wet host loaded from an older save may have the listed property but
+        // no side-state entry yet. Materialize the source state before any
+        // spread so the host and both persistence tables become consistent.
+        if (contained != null
+                && dev.xy177.waterlogged.common.fluid.FFDStoredFluidStates.get(world, pos)
+                        == null) {
+            WaterloggedBlockApi.recordContainedFluid(world, pos, contained);
+        }
         if (!updateImportedFlow(world, pos, state, contained)) return;
         tryMixContainedFluidNeighbors(world, pos, state, contained);
         flowContainedFluid(world, pos, contained);
     }
 
+    /** Extend vanilla sponge absorption to contained source water. */
+    public static boolean absorbWaterloggedAtSponge(World world, BlockPos spongePos,
+            IBlockState spongeState) {
+        if (world == null || world.isRemote || spongePos == null || spongeState == null
+                || spongeState.getBlock() != Blocks.SPONGE) {
+            return false;
+        }
+        boolean absorbed = false;
+        Queue<BlockPos> queue = new ArrayDeque<>();
+        Queue<Integer> depths = new ArrayDeque<>();
+        Set<BlockPos> visited = new HashSet<>();
+        queue.add(spongePos);
+        depths.add(0);
+        visited.add(spongePos);
+        int removed = 0;
+        while (!queue.isEmpty() && removed < 64) {
+            BlockPos current = queue.remove();
+            int depth = depths.remove();
+            if (depth >= 6) continue;
+            for (EnumFacing side : EnumFacing.values()) {
+                BlockPos pos = current.offset(side);
+                if (!visited.add(pos)) continue;
+                IBlockState state = world.getBlockState(pos);
+                boolean contained = WaterloggedBlockApi.isWaterlogged(world, pos)
+                        && WaterloggedBlockApi.getContainedFluid(world, pos)
+                                == FluidRegistry.WATER;
+                boolean ordinaryWater = state.getMaterial() == Material.WATER;
+                if (!contained && !ordinaryWater) continue;
+                if (contained && WaterloggedBlockApi.setDryState(world, pos, state, 3)) {
+                    absorbed = true;
+                    removed++;
+                }
+                queue.add(pos);
+                depths.add(depth + 1);
+            }
+        }
+        if (!absorbed) {
+            return false;
+        }
+        IBlockState live = world.getBlockState(spongePos);
+        if (live.getBlock() == Blocks.SPONGE
+                && !live.getValue(BlockSponge.WET).equals(Boolean.TRUE)) {
+            world.setBlockState(spongePos,
+                    live.withProperty(BlockSponge.WET, Boolean.TRUE), 2);
+            world.playEvent(2001, spongePos,
+                    Block.getIdFromBlock(Blocks.WATER));
+        }
+        return true;
+    }
+
+    /** Trigger sponge absorption from a contained host's own scheduled tick. */
+    private static boolean absorbWaterloggedByNearbySponge(World world, BlockPos waterPos) {
+        if (!WaterloggedBlockApi.isWaterlogged(world, waterPos)
+                || WaterloggedBlockApi.getContainedFluid(world, waterPos)
+                        != FluidRegistry.WATER) {
+            return false;
+        }
+        for (EnumFacing side : EnumFacing.values()) {
+            BlockPos pos = waterPos.offset(side);
+            IBlockState state = world.getBlockState(pos);
+            if (state.getBlock() == Blocks.SPONGE
+                    && absorbWaterloggedAtSponge(world, pos, state)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean updateImportedFlow(World world, BlockPos pos, IBlockState host, Fluid fluid) {
+        // Waterlogged blocks in 1.13+ contain a permanent still source. Their
+        // fluid tick can spread through an open face, but absence of a
+        // neighbouring source must never dry the host itself.
+        if (fluid == FluidRegistry.WATER && withWaterlogged(host, false) != null) {
+            IBlockState persisted = dev.xy177.waterlogged.common.fluid.FFDStoredFluidStates
+                    .get(world, pos);
+            if (persisted == null || !isSourceFluid(persisted)) {
+                dev.xy177.waterlogged.common.fluid.FFDStoredFluidStates.set(
+                        world, pos, WaterloggedBlockApi.sourceState(fluid));
+            }
+            return true;
+        }
         IBlockState stored = dev.xy177.waterlogged.common.fluid.FFDStoredFluidStates.get(world, pos);
         if (stored == null || fluid == null || fluidLevel(stored) == 0) return true;
         int current = fluidLevel(stored);
@@ -489,15 +586,17 @@ public final class WaterloggedPlantFluid {
             next = 0;
         if (next == current) return true;
         if (next < 0) {
-            WaterloggedBlockApi.recordContainedFluid(world, pos, null);
-            IBlockState dry = withWaterlogged(host, false);
-            if (dry != null && dry != host) {
-                WaterloggedBlockApi.setBlockStateWithoutWaterloggingHook(world, pos, dry, 3);
-            }
+            WaterloggedBlockApi.setDryState(world, pos, host, 3);
             world.notifyNeighborsOfStateChange(pos, host.getBlock(), false);
             return false;
         }
-        dev.xy177.waterlogged.common.fluid.FFDStoredFluidStates.set(world, pos, flowState(fluid, next));
+        // A waterlogged host always contains a still source block.  Flow
+        // levels belong to ordinary liquid blocks; retaining a flowing-water
+        // state inside the host makes its rendered surface and saved state
+        // look like a vanilla flowing block.
+        IBlockState containedState = fluid == FluidRegistry.WATER
+                ? WaterloggedBlockApi.sourceState(fluid) : flowState(fluid, next);
+        dev.xy177.waterlogged.common.fluid.FFDStoredFluidStates.set(world, pos, containedState);
         int delay = WaterloggedBlockApi.fluidTickRate(world, fluid);
         if (fluid == FluidRegistry.LAVA && current < 8 && next < 8
                 && next > current && world.rand.nextInt(4) != 0) delay *= 4;
@@ -548,6 +647,7 @@ public final class WaterloggedPlantFluid {
         if (fluid == null || fluid.getBlock() == null) {
             return;
         }
+        IBlockState sourceState = world.getBlockState(pos);
         EnumFacing vertical = fluid.isLighterThanAir() ? EnumFacing.UP : EnumFacing.DOWN;
         BlockPos verticalPos = pos.offset(vertical);
         int current = fluidLevel(WaterloggedBlockApi.getFluidState(world, pos));
@@ -680,7 +780,8 @@ public final class WaterloggedPlantFluid {
             return true;
         }
         IBlockState wetState = withWaterlogged(state, true);
-        if (wetState != null || WaterloggedConfig.isAdditionalWaterloggingBlock(world, state.getBlock())
+        if (wetState != null
+                || WaterloggedConfig.isAdditionalWaterloggingBlock(world, state.getBlock())
                 || WaterloggedBlockApi.isWaterlogged(world, pos)) {
             return false;
         }
@@ -709,6 +810,27 @@ public final class WaterloggedPlantFluid {
     private static boolean placeFlow(World world, BlockPos sourcePos, BlockPos pos,
             EnumFacing direction, int level, Fluid fluid) {
         IBlockState oldState = world.getBlockState(pos);
+        IBlockState wetState = withWaterlogged(oldState, true);
+        if (fluid == FluidRegistry.WATER && wetState != null) {
+            // 1.13+ waterlogging stores a still source, never a flowing level.
+            if (WaterloggedBlockApi.isWaterlogged(world, pos)
+                    || !canPassThrough(world, sourcePos, pos, direction)) return false;
+            if (WaterloggedBlockApi.setContainedFluid(world, pos, oldState,
+                    FluidRegistry.WATER, 3)) {
+                world.notifyNeighborsOfStateChange(pos, oldState.getBlock(), false);
+                return true;
+            }
+            return false;
+        }
+        if (fluid == FluidRegistry.WATER
+                && WaterloggedConfig.isAdditionalWaterloggingBlock(world, oldState.getBlock())
+                && !WaterloggedBlockApi.isWaterlogged(world, pos)
+                && canPassThrough(world, sourcePos, pos, direction)
+                && WaterloggedBlockApi.setContainedFluid(world, pos, oldState,
+                        FluidRegistry.WATER, 3)) {
+            world.notifyNeighborsOfStateChange(pos, oldState.getBlock(), false);
+            return true;
+        }
         if (fluid == FluidRegistry.WATER && tryFormWaterSource(world, pos, oldState)) {
             return true;
         }
@@ -726,24 +848,34 @@ public final class WaterloggedPlantFluid {
         if (!canFlowInto(world, pos, fluid)) {
             return false;
         }
+
         Block fluidBlock = fluid.getBlock();
+        // Waterlogging is created by a source placement, not by a flowing
+        // liquid replacing a dry host during ordinary fluid spread.
+        if (fluid == FluidRegistry.WATER
+                && (withWaterlogged(oldState, true) != null
+                        || WaterloggedConfig.isAdditionalWaterloggingBlock(world, oldState.getBlock()))
+                && !WaterloggedBlockApi.isWaterlogged(world, pos)
+                && level != 0) {
+            return false;
+        }
         if (fluidBlock instanceof BlockFluidBase
                 && !((BlockFluidBase) fluidBlock).displaceIfPossible(world, pos)) {
             return false;
-        }
-        if (!(fluidBlock instanceof BlockFluidBase)
-                && oldState.getMaterial() != Material.AIR
-                && oldState.getBlock() != Blocks.SNOW_LAYER) {
-            oldState.getBlock().dropBlockAsItem(world, pos, oldState, 0);
         }
         IBlockState flowState = flowState(fluid, level);
         if (flowState.getBlock() != Blocks.AIR) {
             IBlockState placedState = ForgeEventFactory.fireFluidPlaceBlockEvent(world, pos,
                     sourcePos, flowState);
-            if (isWaterloggedBlock(oldState)) {
-                WaterloggedBlockApi.recordContainedFluid(world, pos, null);
-            }
             if (world.setBlockState(pos, placedState, 3)) {
+                if (!(fluidBlock instanceof BlockFluidBase)
+                        && oldState.getMaterial() != Material.AIR
+                        && oldState.getBlock() != Blocks.SNOW_LAYER) {
+                    oldState.getBlock().dropBlockAsItem(world, pos, oldState, 0);
+                }
+                if (isWaterloggedBlock(oldState)) {
+                    WaterloggedBlockApi.recordContainedFluid(world, pos, null);
+                }
                 Fluid placedFluid = WaterloggedBlockApi.getFluidForBlock(placedState.getBlock());
                 if (placedFluid != null) {
                     world.scheduleUpdate(pos, placedState.getBlock(),
@@ -934,6 +1066,10 @@ public final class WaterloggedPlantFluid {
         }
         IBlockState wet = withWaterlogged(state, true);
         if (world.setBlockState(pos, wet, 3)) {
+            // Source formation is also a contained-fluid write.  Persist the
+            // host state and both fallback records together with explicit
+            // bucket placement and source diffusion.
+            WaterloggedBlockApi.recordContainedFluid(world, pos, FluidRegistry.WATER);
             world.scheduleUpdate(pos, wet.getBlock(), WATER_TICK_RATE);
             return true;
         }
@@ -962,6 +1098,8 @@ public final class WaterloggedPlantFluid {
 
     public static boolean canPassThrough(World world, BlockPos source, BlockPos target,
             EnumFacing direction) {
+        IBlockState sourceState = world.getBlockState(source);
+        IBlockState targetState = world.getBlockState(target);
         List<double[]> rectangles = new ArrayList<>();
         collectFaceRectangles(world, source, direction, rectangles);
         collectFaceRectangles(world, target, direction.getOpposite(), rectangles);

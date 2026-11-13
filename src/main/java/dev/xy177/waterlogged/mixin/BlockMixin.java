@@ -32,7 +32,10 @@ public abstract class BlockMixin {
             shift = At.Shift.AFTER), cancellable = true)
     private void waterlogged$removeByPlayer(IBlockState state, World world, BlockPos pos,
             EntityPlayer player, boolean willHarvest, CallbackInfoReturnable<Boolean> result) {
-        if (WaterloggedBlockApi.isWaterlogged(world, pos)) {
+        // The server owns contained-fluid replacement.  Running this path on
+        // the client can turn a stale/render-only waterlogged view into a real
+        // water block when the player breaks the host after a reload.
+        if (!world.isRemote && WaterloggedBlockApi.isConfirmedWaterlogged(world, pos)) {
             result.setReturnValue(WaterloggedBlockApi.removeWaterloggedBlockByPlayer(
                     world, pos, state));
         }
@@ -45,21 +48,33 @@ public abstract class BlockMixin {
         return WaterloggedBlockApi.setBlockStateAfterRemoval(world, pos,
                 net.minecraft.init.Blocks.AIR.getDefaultState(), 3, state);
     }
-    @Inject(method = "getStateId", at = @At("RETURN"), cancellable = true)
-    private static void waterlogged$encode(IBlockState state, CallbackInfoReturnable<Integer> result) {
-        result.setReturnValue(WaterloggedBlockApi.encodeUniversalStateId(result.getReturnValue(), state));
-    }
-
-    @Inject(method = "getStateById", at = @At("RETURN"), cancellable = true)
-    private static void waterlogged$decode(int id, CallbackInfoReturnable<IBlockState> result) {
-        result.setReturnValue(WaterloggedBlockApi.decodeUniversalStateId(result.getReturnValue(), id));
-    }
-
     @Inject(method = "getExtendedState", at = @At("RETURN"), cancellable = true)
     private void waterlogged$renderState(IBlockState state, IBlockAccess world, BlockPos pos,
                                           CallbackInfoReturnable<IBlockState> result) {
-        if (WaterloggedBlockApi.isWaterlogged(world, pos))
-            result.setReturnValue(WaterloggedBlockApi.getExtendedState(result.getReturnValue(), world, pos));
+        if (WaterloggedBlockApi.isWaterlogged(world, pos)) {
+            // The side-state packet may briefly precede the vanilla palette packet.
+            // Use the wet listed state as the render base during that window so a
+            // dry palette entry cannot produce a stale/missing water surface.
+            IBlockState renderState = result.getReturnValue();
+            IBlockState wet = WaterloggedBlockApi.withWaterlogged(renderState, true);
+            if (wet != null) renderState = wet;
+            result.setReturnValue(WaterloggedBlockApi.getExtendedState(renderState, world, pos));
+        }
+    }
+
+    /**
+     * Treat the contained-fluid view like vanilla BlockGrass.snowy: derive the
+     * listed state at the world position before rendering/F3 inspection.  The
+     * persisted host state remains the source of truth; this only repairs the
+     * client-side actual-state view after a chunk palette arrives dry first.
+     */
+    @Inject(method = "getActualState", at = @At("RETURN"), cancellable = true)
+    private void waterlogged$actualState(IBlockState state, IBlockAccess world, BlockPos pos,
+                                         CallbackInfoReturnable<IBlockState> result) {
+        if (!WaterloggedBlockApi.isWaterlogged(world, pos)) return;
+        IBlockState actual = result.getReturnValue();
+        IBlockState wet = WaterloggedBlockApi.withWaterlogged(actual, true);
+        if (wet != null) result.setReturnValue(wet);
     }
 
     @Inject(method = "canRenderInLayer", at = @At("RETURN"), cancellable = true)

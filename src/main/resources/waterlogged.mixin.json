@@ -1,13 +1,14 @@
 {
   "required": true,
   "package": "dev.xy177.waterlogged.mixin",
-  "compatibilityLevel": "JAVA_25",
+  "compatibilityLevel": "JAVA_17",
   "target": "@env(DEFAULT)",
   "mixins": [
     "BlockStateContainerMixin",
     "BlockDynamicLiquidMixin",
     "BlockFluidBaseMixin",
     "BlockFluidClassicMixin",
+    "BlockSpongeMixin",
     "BlockFenceMixin",
     "BlockMixin",
     "BlockLiquidMixin",

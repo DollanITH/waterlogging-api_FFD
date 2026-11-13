@@ -91,10 +91,15 @@ unimined.minecraft {
                 at(*accessTransformerLocations)
             }
         }
-        loader "2026.11.03-2"
+        loader "2026.11.11"
         runs.all {
             systemProperty("outlands.dev.mixin", "${mod_id}.mixin.json")
-            args += ['--username', minecraft_username, '--accessToken', '0']
+            args += [
+                    '--assetsDir', unimined.globalCache.resolve('assets').toString(),
+                    '--assetIndex', '1.12',
+                    '--username', minecraft_username,
+                    '--accessToken', '0'
+            ]
             def extraArgs = extra_jvm_args
             if (extraArgs != null && !extraArgs.trim().isEmpty()) {
                 jvmArgs += extraArgs.split { "\\s+" }.toList()

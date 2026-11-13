@@ -38,9 +38,17 @@ repositories {
 }
 
 dependencies {
+    // Mod of Mending is required by the development/runtime environment but is not bundled into Waterlogged.
+    modRuntimeOnly files("${rootProject.projectDir}/libs/Mod of Mending-1.0.0.jar")
+
     if (enable_lwjglx.toBoolean()) {
         compileOnly "com.cleanroommc:lwjglx:1.0.0"
     }
+
+    modCompileOnly ("maven.modrinth:dKv1FGT7:v3ZmWrP5")
+    modRuntimeOnly ("maven.modrinth:dKv1FGT7:v3ZmWrP5")
+    modCompileOnly ("maven.modrinth:1mPcAmuy:8faHEzO3")
+    modRuntimeOnly ("maven.modrinth:1mPcAmuy:8faHEzO3")
 
     // A bundled jar is wrapped in `contained(...)`: Unimined then copies that same artifact to META-INF/libraries and
     // states it in the mcmod.info jar section. Wrapping the declaration rather than naming it again elsewhere is what

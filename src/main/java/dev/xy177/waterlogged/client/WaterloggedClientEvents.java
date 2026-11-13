@@ -5,12 +5,10 @@ import java.util.HashSet;
 import java.util.Set;
 import dev.xy177.waterlogged.api.WaterloggedBlockApi;
 import dev.xy177.waterlogged.client.model.WaterloggedPlantBakedModel;
-import dev.xy177.waterlogged.common.block.BlockWaterloggedStateCarrier;
 import net.minecraft.block.Block;
 import net.minecraft.client.renderer.block.model.IBakedModel;
 import net.minecraft.client.renderer.block.model.ModelResourceLocation;
 import net.minecraft.client.renderer.block.statemap.IStateMapper;
-import net.minecraftforge.client.model.ModelLoader;
 import net.minecraftforge.client.event.ModelBakeEvent;
 import net.minecraftforge.client.event.ModelRegistryEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
@@ -26,11 +24,8 @@ public final class WaterloggedClientEvents {
 
     /** Register before model discovery as well as during ModelRegistryEvent. */
     public static void registerStateMappers() {
-        IStateMapper mapper = block -> java.util.Collections.emptyMap();
         for (Block block : ForgeRegistries.BLOCKS) {
-            if (block instanceof BlockWaterloggedStateCarrier) {
-                ModelLoader.setCustomStateMapper(block, mapper);
-            } else if (WaterloggedBlockApi.hasUniversalWaterloggedProperty(
+            if (WaterloggedBlockApi.hasUniversalWaterloggedProperty(
                     block.getDefaultState())) {
                 WaterloggedBlockApi.registerRenderedBlock(block);
                 WaterloggedBlockApi.registerWaterColorBlock(block);

@@ -1,6 +1,7 @@
 package dev.xy177.waterlogged.mixin;
 
 import dev.xy177.waterlogged.common.block.WaterloggedPlantFluid;
+import dev.xy177.waterlogged.api.WaterloggedBlockApi;
 import dev.xy177.waterlogged.common.fluid.FFDStoredFluidStates;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.util.math.BlockPos;
@@ -25,6 +26,15 @@ public abstract class ChunkMixin {
     @Inject(method = "setBlockState", at = @At("RETURN"))
     private void waterlogged$stateChanged(BlockPos pos, IBlockState next,
             CallbackInfoReturnable<IBlockState> result) {
-        FFDStoredFluidStates.changed(result.getReturnValue(), (Chunk) (Object) this, pos, next);
+        Chunk chunk = (Chunk) (Object) this;
+        IBlockState old = result.getReturnValue();
+        IBlockState actual = chunk.getBlockState(pos);
+        FFDStoredFluidStates.changed(old, chunk, pos, actual);
+        if (old != null && !chunk.getWorld().isRemote
+                && !WaterloggedBlockApi.isInternalStateWrite()
+                && actual.getBlock() == old.getBlock()
+                && !old.equals(actual)) {
+            WaterloggedBlockApi.refreshTrapDoorContainedFluid(chunk.getWorld(), pos, actual);
+        }
     }
 }

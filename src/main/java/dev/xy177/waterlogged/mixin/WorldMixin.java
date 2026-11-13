@@ -100,7 +100,22 @@ public abstract class WorldMixin {
         Fluid incoming = WaterloggedBlockApi.getFluidForBlock(next.getBlock());
         if (incoming != null && existing != null) {
             if (oldWaterlogged) {
-                result.setReturnValue(incoming == existing);
+                if (incoming != existing) {
+                    result.setReturnValue(false);
+                    return;
+                }
+                // A host without a real waterlogged property keeps the fluid level in
+                // FFDStoredFluidStates. Refresh that side state when vanilla fluid ticks
+                // write a new flowing level into the same host.
+                if (WaterloggedBlockApi.withWaterlogged(old, false) == null) {
+                    IBlockState persisted = incoming == FluidRegistry.WATER
+                            ? WaterloggedBlockApi.sourceState(incoming) : next;
+                    FFDStoredFluidStates.set(world, pos, persisted);
+                    FFDFluidloggedData.set(world, pos, incoming);
+                    world.scheduleUpdate(pos, old.getBlock(),
+                            WaterloggedBlockApi.fluidTickRate(world, incoming));
+                }
+                result.setReturnValue(true);
                 return;
             }
         }
@@ -116,16 +131,19 @@ public abstract class WorldMixin {
             if (incoming != null && !oldWaterlogged
                     && (WaterloggedBlockApi.canBeWaterlogged(old)
                             || WaterloggedConfig.isAdditionalWaterloggingBlock(world, old.getBlock()))) {
-                if (!WaterloggedConfig.isFluidAllowed(world, incoming)
-                        || !WaterloggedPlantFluid.isSourceFluid(next)) {
+                BlockPos origin = WaterloggedBlockApi.getActiveFlowOrigin(world);
+                boolean sourceWrite = WaterloggedPlantFluid.isSourceFluid(next);
+                // Keep real vanilla flow direction and collision checks, but
+                // store still water inside the host as required by waterlogging.
+                if (WaterloggedConfig.isFluidAllowed(world, incoming)
+                        && (incoming != FluidRegistry.WATER || sourceWrite)
+                        && (incoming != FluidRegistry.WATER || !WaterloggedConfig.isAdditionalWaterloggingBlock(world, old.getBlock()))
+                        && WaterloggedBlockApi.setContainedFluid(world, pos, old, incoming, flags)) {
+                    result.setReturnValue(true);
+                } else {
                     result.setReturnValue(false);
-                    return;
                 }
-                wet = WaterloggedBlockApi.withWaterlogged(old, true);
-                if (wet == null) {
-                    wet = old;
-                }
-                fluidState = WaterloggedBlockApi.sourceState(incoming);
+                return;
             } else if (existing != null && WaterloggedConfig.isFluidAllowed(world, existing)
                     && WaterloggedPlantFluid.isSourceFluid(
                             WaterloggedBlockApi.getFluidState(world, pos))) {
@@ -153,7 +171,11 @@ public abstract class WorldMixin {
                 }
             } else if (WaterloggedBlockApi.withWaterlogged(next, false) != null) {
                 Fluid fluid = WaterloggedBlockApi.getFluidForBlock(fluidState.getBlock());
-                WaterloggedBlockApi.recordContainedFluid(world, pos, fluid);
+                // Persist the actual flowing state for every converted host. The
+                // universal waterlogged property is a render/state view and is
+                // not sufficient to retain diffusion levels across chunk reload.
+                FFDStoredFluidStates.set(world, pos, fluidState);
+                FFDFluidloggedData.set(world, pos, fluid);
                 world.scheduleUpdate(pos, next.getBlock(),
                         WaterloggedBlockApi.fluidTickRate(world, fluid));
             } else {
@@ -161,6 +183,10 @@ public abstract class WorldMixin {
                 world.scheduleUpdate(pos, next.getBlock(),
                         WaterloggedBlockApi.fluidTickRate(world,
                                 WaterloggedBlockApi.getFluidForBlock(fluidState.getBlock())));
+            }
+            if (next.getBlock() == old.getBlock() && !old.equals(next)
+                    && next.getBlock() instanceof net.minecraft.block.BlockTrapDoor) {
+                WaterloggedBlockApi.refreshTrapDoorContainedFluid(world, pos, next);
             }
             result.setReturnValue(true);
         } else {
@@ -172,7 +198,13 @@ public abstract class WorldMixin {
     private void waterlogged$afterNeighborChanged(BlockPos pos, Block changedBlock,
             BlockPos changedPos, org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
         World world = (World) (Object) this;
-        WaterloggedBlockApi.onNeighborChanged(world, pos, world.getBlockState(pos).getBlock());
+        IBlockState state = world.getBlockState(pos);
+        WaterloggedBlockApi.onNeighborChanged(world, pos, state.getBlock());
+        Fluid fluid = WaterloggedBlockApi.getFluidForBlock(state.getBlock());
+        if (fluid != null && !WaterloggedBlockApi.isWaterlogged(world, pos)) {
+            world.scheduleUpdate(pos, state.getBlock(),
+                    WaterloggedBlockApi.fluidTickRate(world, fluid));
+        }
     }
 
     @Redirect(method = "immediateBlockTick",

@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import javax.annotation.Nullable;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockChest;
@@ -31,17 +32,15 @@ import net.minecraft.entity.Entity;
 import net.minecraft.init.Blocks;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.ResourceLocation;
+import net.minecraft.util.math.AxisAlignedBB;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
-import net.minecraftforge.registries.IForgeRegistry;
 import net.minecraftforge.common.property.IUnlistedProperty;
 import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidRegistry;
-import dev.xy177.waterlogged.WaterloggedMod;
 import dev.xy177.waterlogged.common.WaterloggedConfig;
-import dev.xy177.waterlogged.common.block.BlockWaterloggedStateCarrier;
 import dev.xy177.waterlogged.common.block.WaterloggedPlantFluid;
 import dev.xy177.waterlogged.common.fluid.FFDFluidloggedData;
 import dev.xy177.waterlogged.common.fluid.FFDStoredFluidStates;
@@ -55,14 +54,29 @@ public final class WaterloggedBlockApi {
             Collections.newSetFromMap(new IdentityHashMap<Block, Boolean>());
     private static final Set<ResourceLocation> RENDERED_MODELS =
             new java.util.LinkedHashSet<>();
-    private static final Map<Block, Block> STATE_CARRIERS = new IdentityHashMap<>();
-    private static final Map<IBlockState, Integer> WET_LEGACY_IDS = new IdentityHashMap<>();
-    private static final Map<Integer, IBlockState> WET_STATES_BY_LEGACY_ID =
-            new LinkedHashMap<>();
     private static final ThreadLocal<Boolean> INTERNAL_STATE_WRITE =
             ThreadLocal.withInitial(() -> Boolean.FALSE);
+    private static final ThreadLocal<World> ACTIVE_FLOW_WORLD = new ThreadLocal<>();
+    private static final ThreadLocal<BlockPos> ACTIVE_FLOW_ORIGIN = new ThreadLocal<>();
 
     private WaterloggedBlockApi() {
+    }
+
+    public static void setActiveFlowOrigin(World world, BlockPos pos) {
+        ACTIVE_FLOW_WORLD.set(world);
+        ACTIVE_FLOW_ORIGIN.set(pos);
+    }
+
+    public static void clearActiveFlowOrigin(World world) {
+        if (ACTIVE_FLOW_WORLD.get() == world) {
+            ACTIVE_FLOW_WORLD.remove();
+            ACTIVE_FLOW_ORIGIN.remove();
+        }
+    }
+
+    @Nullable
+    public static BlockPos getActiveFlowOrigin(World world) {
+        return ACTIVE_FLOW_WORLD.get() == world ? ACTIVE_FLOW_ORIGIN.get() : null;
     }
 
     public interface Adapter {
@@ -136,10 +150,6 @@ public final class WaterloggedBlockApi {
         return new ArrayList<>(WATER_COLOR_BLOCKS);
     }
 
-    public static synchronized List<Block> stateCarriers() {
-        return new ArrayList<>(STATE_CARRIERS.values());
-    }
-
     public static synchronized boolean isRenderedModel(ResourceLocation model) {
         if (model == null) {
             return false;
@@ -191,94 +201,12 @@ public final class WaterloggedBlockApi {
         return expanded;
     }
 
-    public static synchronized void prepareUniversalStateCarriers(
-            IForgeRegistry<Block> registry) {
-        if (!WaterloggedConfig.isWaterloggingEnabled()) {
-            return;
-        }
-        List<Block> sources = new ArrayList<>();
-        for (Block block : registry.getValuesCollection()) {
-            if (hasUniversalWaterloggedProperty(block.getDefaultState())
-                    && requiresStateCarrier(block)) {
-                sources.add(block);
-            }
-        }
-        for (Block source : sources) {
-            if (STATE_CARRIERS.containsKey(source) || source.getRegistryName() == null) {
-                continue;
-            }
-            ResourceLocation sourceName = source.getRegistryName();
-            Block carrier = new BlockWaterloggedStateCarrier();
-            carrier.setRegistryName(WaterloggedMod.MODID,
-                    "waterlogged_state/" + sourceName.getNamespace() + "/"
-                            + sourceName.getPath());
-            registry.register(carrier);
-            STATE_CARRIERS.put(source, carrier);
-        }
-    }
-
     public static synchronized void initializeUniversalStateMappings() {
-        WET_LEGACY_IDS.clear();
-        WET_STATES_BY_LEGACY_ID.clear();
-        if (!WaterloggedConfig.isWaterloggingEnabled()) {
-            return;
-        }
-        for (Block source : net.minecraftforge.fml.common.registry.ForgeRegistries.BLOCKS) {
-            if (!hasUniversalWaterloggedProperty(source.getDefaultState())) {
-                continue;
-            }
-            List<IBlockState> dryStates = persistedDryStates(source);
-            List<Integer> freeMetas = freeMetadataValues(source, dryStates);
-            Block aliasBlock = freeMetas.size() >= dryStates.size()
-                    ? source : STATE_CARRIERS.get(source);
-            if (aliasBlock == null) {
-                continue;
-            }
-            int aliasBlockId = Block.getIdFromBlock(aliasBlock);
-            for (int index = 0; index < dryStates.size(); index++) {
-                IBlockState wetState = dryStates.get(index)
-                        .withProperty(UNIVERSAL_WATERLOGGED, true);
-                int aliasMeta = aliasBlock == source ? freeMetas.get(index) : index;
-                int paletteId = aliasBlockId << 4 | aliasMeta;
-                int legacyId = aliasBlockId | aliasMeta << 12;
-                int sourceMeta = source.getMetaFromState(dryStates.get(index)) & 15;
-                for (IBlockState variant : source.getBlockState().getValidStates()) {
-                    if (variant.getValue(UNIVERSAL_WATERLOGGED)
-                            && (source.getMetaFromState(variant) & 15) == sourceMeta) {
-                        Block.BLOCK_STATE_IDS.put(variant, paletteId);
-                        WET_LEGACY_IDS.put(variant, legacyId);
-                    }
-                }
-                Block.BLOCK_STATE_IDS.put(wetState, paletteId);
-                WET_LEGACY_IDS.put(wetState, legacyId);
-                WET_STATES_BY_LEGACY_ID.put(legacyId, wetState);
-            }
-        }
-    }
-
-    public static synchronized int encodeUniversalStateId(int stateId, IBlockState state) {
-        if (!WaterloggedConfig.isWaterloggingEnabled()) {
-            return stateId;
-        }
-        Integer encoded = WET_LEGACY_IDS.get(state);
-        return encoded == null ? stateId : encoded;
-    }
-
-    public static synchronized IBlockState decodeUniversalStateId(
-            IBlockState state, int stateId) {
-        if (!WaterloggedConfig.isWaterloggingEnabled()) {
-            return state;
-        }
-        IBlockState decoded = WET_STATES_BY_LEGACY_ID.get(stateId);
-        return decoded == null ? state : decoded;
+        // Wet state persistence is handled by the per-chunk host/fluid records.
     }
 
     /** Resolve the original host state used by vanilla block-destroy particles. */
     public static IBlockState waterloggedDestroyParticleState(Block block, int meta, int data) {
-        IBlockState decoded = decodeUniversalStateId(null, data);
-        if (decoded != null) {
-            return particleHostState(decoded);
-        }
         if (block == null) {
             return Blocks.AIR.getDefaultState();
         }
@@ -293,9 +221,7 @@ public final class WaterloggedBlockApi {
 
     /** Resolve the state passed to ParticleDigging for a destroyed block. */
     public static IBlockState waterloggedDestroyParticleState(IBlockState original, int data) {
-        IBlockState decoded = decodeUniversalStateId(null, data);
-        IBlockState state = decoded == null ? original : decoded;
-        return particleHostState(state == null ? Blocks.AIR.getDefaultState() : state);
+        return particleHostState(original == null ? Blocks.AIR.getDefaultState() : original);
     }
 
     private static IBlockState particleHostState(IBlockState state) {
@@ -333,9 +259,6 @@ public final class WaterloggedBlockApi {
     }
 
     private static boolean supportsUniversalWaterlogging(Block block) {
-        if (block instanceof BlockWaterloggedStateCarrier) {
-            return false;
-        }
         if (block instanceof BlockStairs || block instanceof BlockFence
                 || block instanceof BlockWall || block instanceof BlockPane
                 || block instanceof BlockTrapDoor || block instanceof BlockLadder
@@ -349,46 +272,41 @@ public final class WaterloggedBlockApi {
         return block instanceof BlockSlab && !((BlockSlab) block).isDouble();
     }
 
-    private static boolean requiresStateCarrier(Block block) {
-        List<IBlockState> dryStates = persistedDryStates(block);
-        return freeMetadataValues(block, dryStates).size() < dryStates.size();
-    }
-
-    private static List<IBlockState> persistedDryStates(Block block) {
-        List<IBlockState> states = new ArrayList<>();
-        for (int meta = 0; meta < 16; meta++) {
-            IBlockState state;
-            try {
-                state = block.getStateFromMeta(meta);
-            } catch (RuntimeException ignored) {
-                continue;
-            }
-            if (hasUniversalWaterloggedProperty(state)) {
-                state = state.withProperty(UNIVERSAL_WATERLOGGED, false);
-            }
-            if (!states.contains(state)) {
-                states.add(state);
-            }
-        }
-        return states;
-    }
-
-    private static List<Integer> freeMetadataValues(Block block, List<IBlockState> dryStates) {
-        boolean[] occupied = new boolean[16];
-        for (IBlockState state : dryStates) {
-            occupied[block.getMetaFromState(state) & 15] = true;
-        }
-        List<Integer> values = new ArrayList<>();
-        for (int meta = 0; meta < occupied.length; meta++) {
-            if (!occupied[meta]) {
-                values.add(meta);
-            }
-        }
-        return values;
-    }
-
     public static boolean canBeWaterlogged(IBlockState state) {
         return WaterloggedPlantFluid.withWaterlogged(state, true) != null;
+    }
+
+    public static boolean trapDoorCollisionStateChanged(IBlockState oldState,
+            IBlockState newState) {
+        if (oldState == null || newState == null
+                || oldState.getBlock() != newState.getBlock()
+                || !(oldState.getBlock() instanceof BlockTrapDoor)) return false;
+        return !oldState.getValue(BlockTrapDoor.OPEN).equals(newState.getValue(BlockTrapDoor.OPEN))
+                || !oldState.getValue(BlockTrapDoor.FACING).equals(newState.getValue(BlockTrapDoor.FACING))
+                || !oldState.getValue(BlockTrapDoor.HALF).equals(newState.getValue(BlockTrapDoor.HALF));
+    }
+
+    /** Detect state changes that alter the solid collision geometry seen by fluid. */
+    public static boolean fluidCollisionStateChanged(World world, BlockPos pos,
+            IBlockState oldState, IBlockState newState) {
+        if (world == null || pos == null || oldState == null || newState == null
+                || oldState.getBlock() != newState.getBlock()) return false;
+        List<AxisAlignedBB> before = new ArrayList<>();
+        List<AxisAlignedBB> after = new ArrayList<>();
+        AxisAlignedBB probe = new AxisAlignedBB(pos).grow(0.001D);
+        oldState.addCollisionBoxToList(world, pos, probe, before, null, false);
+        newState.addCollisionBoxToList(world, pos, probe, after, null, false);
+        if (before.size() != after.size()) return true;
+        for (int i = 0; i < before.size(); i++) {
+            AxisAlignedBB a = before.get(i), b = after.get(i);
+            if (Math.abs(a.minX - b.minX) > 1.0E-6D
+                    || Math.abs(a.minY - b.minY) > 1.0E-6D
+                    || Math.abs(a.minZ - b.minZ) > 1.0E-6D
+                    || Math.abs(a.maxX - b.maxX) > 1.0E-6D
+                    || Math.abs(a.maxY - b.maxY) > 1.0E-6D
+                    || Math.abs(a.maxZ - b.maxZ) > 1.0E-6D) return true;
+        }
+        return false;
     }
 
     /** Match vanilla's liquid-level reads while allowing a host state without LEVEL. */
@@ -509,6 +427,54 @@ public final class WaterloggedBlockApi {
                         world.getBlockState(pos).getBlock());
     }
 
+    /** Return whether a dry waterloggable block presents a full horizontal collision barrier. */
+    public static boolean isFluidCollisionBlocked(World world, BlockPos pos, IBlockState state) {
+        if (world == null || pos == null || state == null) {
+            return false;
+        }
+        if (state.getMaterial() == Material.PORTAL
+                || state.getMaterial() == Material.STRUCTURE_VOID) {
+            return true;
+        }
+        List<AxisAlignedBB> boxes = new ArrayList<>();
+        state.addCollisionBoxToList(world, pos, new AxisAlignedBB(pos).grow(0.001D),
+                boxes, null, false);
+        for (AxisAlignedBB box : boxes) {
+            if (box.minX <= pos.getX() + 0.001D
+                    && box.maxX >= pos.getX() + 0.999D
+                    && box.minZ <= pos.getZ() + 0.001D
+                    && box.maxZ >= pos.getZ() + 0.999D) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Checks the actual contact point on the face through which fluid moves. */
+    public static boolean isFluidCollisionBlocked(World world, BlockPos pos, IBlockState state,
+            EnumFacing direction) {
+        if (world == null || pos == null || state == null || direction == null) return false;
+        if (state.getMaterial() == Material.PORTAL || state.getMaterial() == Material.STRUCTURE_VOID) {
+            return true;
+        }
+        List<AxisAlignedBB> boxes = new ArrayList<>();
+        state.addCollisionBoxToList(world, pos, new AxisAlignedBB(pos).grow(0.001D), boxes, null, false);
+        double x = pos.getX() + 0.5D;
+        double y = pos.getY() + 0.5D;
+        double z = pos.getZ() + 0.5D;
+        if (direction == EnumFacing.WEST) x = pos.getX() + 0.001D;
+        else if (direction == EnumFacing.EAST) x = pos.getX() + 0.999D;
+        else if (direction == EnumFacing.DOWN) y = pos.getY() + 0.001D;
+        else if (direction == EnumFacing.UP) y = pos.getY() + 0.999D;
+        else if (direction == EnumFacing.NORTH) z = pos.getZ() + 0.001D;
+        else if (direction == EnumFacing.SOUTH) z = pos.getZ() + 0.999D;
+        for (AxisAlignedBB box : boxes) {
+            if (box.minX <= x && x <= box.maxX && box.minY <= y && y <= box.maxY
+                    && box.minZ <= z && z <= box.maxZ) return true;
+        }
+        return false;
+    }
+
     public static boolean isWaterloggedFlowOccluded(Block liquid, World world,
             BlockPos source, BlockPos neighbor) {
         if (liquid == null || world == null || source == null || neighbor == null) {
@@ -536,7 +502,30 @@ public final class WaterloggedBlockApi {
     }
 
     public static boolean isWaterlogged(IBlockAccess world, BlockPos pos) {
-        return isWaterlogged(world.getBlockState(pos)) || FFDStoredFluidStates.has(world, pos);
+        IBlockState state = world.getBlockState(pos);
+        // A saved contained-fluid record must win during chunk/client
+        // reconstruction: vanilla may expose the host palette as dry for a
+        // few ticks before the persisted side state is replayed.  Once the
+        // record is removed by the authoritative dry transition, the listed
+        // host state becomes the fallback exactly like BlockGrass.snowy.
+        if (FFDStoredFluidStates.has(world, pos)) {
+            return true;
+        }
+        if (hasUniversalWaterloggedProperty(state)
+                || state.getBlock() instanceof IWaterloggableBlock
+                || withWaterlogged(state, true) != null) {
+            return isWaterlogged(state);
+        }
+        return false;
+    }
+
+    /** Server-side predicate used by removal and replacement paths. */
+    public static boolean isConfirmedWaterlogged(World world, BlockPos pos) {
+        IBlockState state = world.getBlockState(pos);
+        if (FFDStoredFluidStates.has(world, pos)) return true;
+        if (isWaterlogged(state)) return true;
+        if (withWaterlogged(state, true) != null) return false;
+        return false;
     }
 
     public static boolean containsWater(IBlockState state) {
@@ -602,28 +591,31 @@ public final class WaterloggedBlockApi {
     }
 
     public static boolean setDryState(World world, BlockPos pos, IBlockState state, int flags) {
-        if (!isWaterlogged(world, pos)) {
+        IBlockState saved = FFDStoredFluidStates.getHostState(world, pos);
+        IBlockState live = world.getBlockState(pos);
+        boolean recordedWet = FFDStoredFluidStates.has(world, pos);
+        boolean listedWet = isWaterlogged(live);
+        if (!recordedWet && !listedWet && saved == null) return false;
+        IBlockState hostState = saved != null ? saved : live;
+        if (hostState.getBlock() != live.getBlock()) hostState = state;
+        IBlockState dryState = withWaterlogged(hostState, false);
+        if (dryState == null) return false;
+        IBlockState current = world.getBlockState(pos);
+        if (!dryState.equals(current)
+                && !setBlockStateWithoutWaterloggingHook(world, pos, dryState, flags)) {
             return false;
         }
-        IBlockState dryState = withWaterlogged(state, false);
-        boolean changed;
-        if (dryState != null && !dryState.equals(state)) {
-            changed = setBlockStateWithoutWaterloggingHook(world, pos, dryState, flags);
-        } else if (FFDStoredFluidStates.has(world, pos)) {
-            changed = true;
-        } else {
-            return false;
+        if (!dryState.equals(world.getBlockState(pos))) return false;
+        FFDStoredFluidStates.remove(world, pos);
+        if (!world.isRemote) {
+            world.notifyBlockUpdate(pos, current, dryState, 3);
+            world.notifyNeighborsOfStateChange(pos, dryState.getBlock(), false);
         }
-        if (changed) {
-            FFDStoredFluidStates.remove(world, pos);
-            recordContainedFluid(world, pos, null);
-            if (!world.isRemote) {
-                IBlockState current = world.getBlockState(pos);
-                world.notifyBlockUpdate(pos, current, current, 3);
-                world.notifyNeighborsOfStateChange(pos, current.getBlock(), false);
-            }
+        FFDStoredFluidStates.sync(world, pos);
+        if (!world.isRemote) {
+            world.getChunk(pos).markDirty();
         }
-        return changed;
+        return true;
     }
 
     /** Match the upstream removal path: harvest the host first, then replace
@@ -640,7 +632,8 @@ public final class WaterloggedBlockApi {
         if (world == null || pos == null) {
             return false;
         }
-        boolean wasWaterlogged = isWaterlogged(world, pos);
+        boolean wasWaterlogged = world.isRemote
+                ? isWaterlogged(world, pos) : isConfirmedWaterlogged(world, pos);
         IBlockState next = wasWaterlogged
                 ? getReplacementState(world, pos, removedState) : replacement;
         if (next == null) {
@@ -705,7 +698,20 @@ public final class WaterloggedBlockApi {
     }
 
     public static void recordContainedFluid(World world, BlockPos pos, Fluid fluid) {
-        FFDStoredFluidStates.remove(world, pos);
+        if (world == null || pos == null) {
+            return;
+        }
+        if (fluid == null) {
+            // Keep removal in one lifecycle entry point.  FFDStoredFluidStates
+            // also clears the type fallback, so a dry host cannot retain a
+            // second independent fluid record.
+            FFDStoredFluidStates.remove(world, pos);
+            return;
+        }
+        // Persist both the concrete fluid state (including level) and the
+        // fluid identity.  Water is deliberately included in both tables;
+        // it is an existing vanilla fluid, not a block to recreate on reload.
+        FFDStoredFluidStates.set(world, pos, sourceState(fluid));
         FFDFluidloggedData.set(world, pos, fluid);
     }
 
@@ -859,6 +865,23 @@ public final class WaterloggedBlockApi {
 
     public static void updateTick(World world, BlockPos pos, IBlockState state) {
         WaterloggedPlantFluid.updateTick(world, pos, state);
+    }
+
+    /** Refresh only the contained water state of a trapdoor after its own state changes. */
+    public static void refreshTrapDoorContainedFluid(World world, BlockPos pos,
+            IBlockState state) {
+        if (world == null || world.isRemote || state == null
+                || !(state.getBlock() instanceof BlockTrapDoor)
+                || !isWaterlogged(world, pos)) return;
+        Fluid fluid = getContainedFluid(world, pos);
+        if (fluid == null) return;
+        IBlockState source = sourceState(fluid);
+        FFDStoredFluidStates.set(world, pos, source);
+        FFDFluidloggedData.set(world, pos, fluid);
+        world.scheduleUpdate(pos, state.getBlock(), 1);
+        world.notifyNeighborsOfStateChange(pos, state.getBlock(), false);
+        world.notifyBlockUpdate(pos, state, state, 3);
+        FFDStoredFluidStates.sync(world, pos);
     }
 
     public static IBlockState sourceState(Fluid fluid) {

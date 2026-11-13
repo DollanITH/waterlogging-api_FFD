@@ -3,6 +3,7 @@ package dev.xy177.waterlogged.common.fluid;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.WeakHashMap;
 
 import javax.annotation.Nullable;
@@ -24,6 +25,7 @@ import net.minecraftforge.fluids.FluidRegistry;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import dev.xy177.waterlogged.WaterloggedMod;
 import dev.xy177.waterlogged.api.WaterloggedBlockApi;
+import dev.xy177.waterlogged.common.WaterloggedConfig;
 import dev.xy177.waterlogged.common.network.WaterloggedNetwork;
 
 public final class FFDFluidloggedData {
@@ -59,7 +61,10 @@ public final class FFDFluidloggedData {
         if (world == null || pos == null) {
             return;
         }
-        String name = fluid == null || fluid == FluidRegistry.WATER ? null : fluid.getName();
+        // Keep water's identity in the fallback table as well.  The contained
+        // state table carries the level/state, while this table carries the
+        // fluid type; both records must exist for a persisted diffusion cell.
+        String name = fluid == null ? null : fluid.getName();
         boolean changed;
         synchronized (LOCK) {
             Map<Long, Map<Long, String>> worldData = dataFor(world, name != null);
@@ -100,6 +105,29 @@ public final class FFDFluidloggedData {
         }
     }
 
+    /** Remove type-only records that have no matching contained-state entry. */
+    public static void retainChunk(World world, int chunkX, int chunkZ,
+                                   Set<Long> validPositions) {
+        if (world == null || validPositions == null) {
+            return;
+        }
+        synchronized (LOCK) {
+            Map<Long, Map<Long, String>> worldData = dataFor(world, false);
+            if (worldData == null) {
+                return;
+            }
+            long key = chunkKey(chunkX, chunkZ);
+            Map<Long, String> chunkData = worldData.get(key);
+            if (chunkData == null) {
+                return;
+            }
+            chunkData.keySet().removeIf(position -> !validPositions.contains(position));
+            if (chunkData.isEmpty()) {
+                worldData.remove(key);
+            }
+        }
+    }
+
     @SubscribeEvent
     public static void loadChunkData(ChunkDataEvent.Load event) {
         NBTTagList list = event.getData().getTagList(NBT_DATA, Constants.NBT.TAG_COMPOUND);
@@ -131,9 +159,11 @@ public final class FFDFluidloggedData {
         for (Map.Entry<Long, String> entry : stored.entrySet()) {
             BlockPos pos = BlockPos.fromLong(entry.getKey());
             IBlockState state = chunk.getBlockState(pos);
-            if ((!WaterloggedBlockApi.canBeWaterlogged(state)
-                    && !dev.xy177.waterlogged.common.WaterloggedConfig
-                            .isAdditionalWaterloggingBlock(event.getWorld(), state.getBlock()))
+            if ((!FFDStoredFluidStates.has(event.getWorld(), pos)
+                    && !WaterloggedBlockApi.isWaterlogged(state)
+                    && WaterloggedBlockApi.withWaterlogged(state, true) == null
+                    && !WaterloggedConfig.isAdditionalWaterloggingBlock(
+                            event.getWorld(), state.getBlock()))
                     || FluidRegistry.getFluid(entry.getValue()) == null) {
                 removeLocal(event.getWorld(), pos);
                 continue;
@@ -185,6 +215,19 @@ public final class FFDFluidloggedData {
             Map<Long, String> retained = UNLOADED_CHUNK_DATA.remove(event.getChunk());
             if (retained != null) {
                 putChunk(event.getWorld(), event.getChunk().x, event.getChunk().z, retained);
+            }
+        }
+        if (!event.getWorld().isRemote) {
+            Map<Long, String> loaded = snapshot(event.getWorld(), event.getChunk().x, event.getChunk().z);
+            for (Long packed : loaded.keySet()) {
+                BlockPos pos = BlockPos.fromLong(packed);
+                IBlockState state = event.getWorld().getBlockState(pos);
+                if (WaterloggedBlockApi.isWaterlogged(state)) continue;
+                IBlockState wet = WaterloggedBlockApi.withWaterlogged(state, true);
+                if (wet != null) {
+                    WaterloggedBlockApi.setBlockStateWithoutWaterloggingHook(
+                            event.getWorld(), pos, wet, 3);
+                }
             }
         }
     }
