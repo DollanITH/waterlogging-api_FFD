@@ -1,6 +1,7 @@
 package dev.xy177.waterlogged;
 
 import dev.xy177.waterlogged.api.WaterloggedBlockApi;
+import dev.xy177.waterlogged.api.WaterloggedApi;
 import dev.xy177.waterlogged.common.WaterloggedConfig;
 import dev.xy177.waterlogged.common.WaterloggedBucketHandler;
 import dev.xy177.waterlogged.common.fluid.FFDFluidloggedData;
@@ -25,6 +26,7 @@ public final class WaterloggedMod {
 
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
+        WaterloggedApi.installProvider(new dev.xy177.waterlogged.common.WaterloggedApiProvider());
         WaterloggedConfig.load(event.getSuggestedConfigurationFile());
         WaterloggedNetwork.init();
         MinecraftForge.EVENT_BUS.register(WaterloggedBucketHandler.class);

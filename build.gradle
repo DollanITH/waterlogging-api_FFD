@@ -133,6 +133,7 @@ unimined.minecraft {
 }
 
 dependencies {
+    api project(':api')
     if (use_asset_mover.toBoolean()) {
         implementation "com.cleanroommc:assetmover:${asset_mover_version}"
     }
@@ -221,6 +222,9 @@ compileJava {
 jar {
     archiveClassifier = 'dev'
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude 'dev/xy177/waterlogged/api/IWaterloggableBlock.class'
+    exclude 'dev/xy177/waterlogged/api/WaterloggedApi.class'
+    exclude 'dev/xy177/waterlogged/api/WaterloggedApi$*.class'
     finalizedBy(tasks.named(remapTaskName).get())
 }
 

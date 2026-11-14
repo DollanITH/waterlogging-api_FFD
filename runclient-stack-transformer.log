@@ -1,0 +1,47 @@
+
+> Configure project :
+[Unimined] Plugin Version: 1.4.47
+[Unimined/MinecraftDownloader] retrieving version metadata
+[Unimined/Forge] Using FG3 transformer
+[Unimined/Minecraft ::main] Applying minecraft config for source set 'main'
+[Unimined/Minecraft ::main] Applying OutlandsFG3
+[Unimined/Minecraft ::main] Applying run configs
+Merging client and server jars...
+[Unimined/Outlands] using the loader's published classes (-srg) instead of running mcp_config
+[Unimined/ForgeTransformer] Applying ATs [forge_at.cfg]
+[Unimined/ModRemapper] Remapping mods from searge to mcp
+[Unimined/ModRemapper] No mods found for remapping
+[Unimined/ModRemapper] Remapping mods from searge to mcp
+[Unimined/ModRemapper] Found 2 mods for remapping
+[Unimined/ModRemapper] Remapping mods from searge to mcp
+[Unimined/ModRemapper] Found 2 mods for remapping
+
+> Task :generateJavaTemplates UP-TO-DATE
+> Task :compileJava UP-TO-DATE
+> Task :generateResourceTemplates UP-TO-DATE
+> Task :processResources UP-TO-DATE
+> Task :classes UP-TO-DATE
+> Task :preRunClient FAILED
+
+[Incubating] Problems report is available at: file:///E:/mdk/waterlogged/sources/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':preRunClient' (registered in build file 'build.gradle').
+> java.nio.file.AccessDeniedException: E:\mdk\waterlogged\sources\run\client\natives\SAPIWrapper_x64.dll
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+BUILD FAILED in 5s
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.8.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+5 actionable tasks: 1 executed, 4 up-to-date

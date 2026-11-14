@@ -1,0 +1,40 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'top.outlands.unimined' version '1.4.47'
+}
+
+group = 'dev.xy177.waterlogged'
+version = rootProject.version
+base {
+    archivesName = 'waterlogged-api'
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+    withSourcesJar()
+}
+
+unimined.minecraft {
+    version '1.12.2'
+    mappings { mcp('stable', '39-1.12') }
+    outlands { loader '2026.11.11' }
+    defaultRemapJar = false
+    remap(tasks.named('jar').get()) { }
+}
+
+tasks.named('jar', Jar) {
+    archiveClassifier = 'dev'
+    finalizedBy(tasks.named('remapJar'))
+}
+
+publishing {
+    publications {
+        api(MavenPublication) {
+            groupId = 'dev.xy177.waterlogged'
+            artifactId = 'waterlogged-api'
+            artifact(tasks.named('remapJar'))
+            artifact(tasks.named('sourcesJar')) { classifier = 'sources' }
+        }
+    }
+}

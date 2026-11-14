@@ -79,19 +79,10 @@ public final class WaterloggedBlockApi {
         return ACTIVE_FLOW_WORLD.get() == world ? ACTIVE_FLOW_ORIGIN.get() : null;
     }
 
-    public interface Adapter {
-        boolean matches(IBlockState state);
-
-        boolean isWaterlogged(IBlockState state);
-
-        IBlockState withWaterlogged(IBlockState state, boolean waterlogged);
+    public interface Adapter extends WaterloggedApi.Adapter {
     }
 
-    public interface FluidMixRule {
-        boolean matches(Fluid source, Fluid target);
-
-        IBlockState getResult(World world, BlockPos targetPos, BlockPos sourcePos,
-                               EnumFacing side, IBlockState sourceState, IBlockState targetState);
+    public interface FluidMixRule extends WaterloggedApi.FluidMixRule {
     }
 
     public static void registerAdapter(Adapter adapter) {
