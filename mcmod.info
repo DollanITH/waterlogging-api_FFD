@@ -1,0 +1,22 @@
+{
+	"modList": [{
+		"modid": "waterlogged",
+		"name": "Waterlogged",
+		"version": "0.1.0",
+		"mcversion": "1.12.2",
+		"description": "Adds waterlogging support (From Farmers-Future-Delight Mod) with fluid flow, rendering, persistence, and bucket interaction.",
+		"authorList": ["xy177"],
+		"credits": "",
+		"url": "",
+		"updateJSON": "",
+		"logoFile": "",
+		"modProperties": {
+			"issueTrackerUrl": ""
+		}
+	}],
+	"jar": {
+		"mixins": [
+			{"config": "waterlogged.mixin.json"}
+		]
+	}
+}
