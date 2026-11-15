@@ -3,11 +3,11 @@
   <groupId>dev.xy177.waterlogged</groupId>
   <artifactId>waterlogged-api</artifactId>
   <versioning>
-    <latest>0.1.0</latest>
-    <release>0.1.0</release>
+    <latest>0.1.1-beta</latest>
+    <release>0.1.1-beta</release>
     <versions>
-      <version>0.1.0</version>
+      <version>0.1.1-beta</version>
     </versions>
-    <lastUpdated>20261115154138</lastUpdated>
+    <lastUpdated>20261115172200</lastUpdated>
   </versioning>
 </metadata>
