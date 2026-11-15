@@ -38,6 +38,8 @@ jobs:
         run: touch build/gh-pages/.nojekyll
 
       # keep_files 保证 gh-pages 上已有版本的 maven 目录不被这次发布抹掉。
+      # force：gh-pages 是纯产物分支，peaceiris 在临时目录里重新 init 提交，
+      # 与远端历史没有共同祖先，普通 push 会被判成 non-fast-forward 而失败。
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
@@ -45,3 +47,4 @@ jobs:
           publish_dir: ./build/gh-pages
           publish_branch: gh-pages
           keep_files: true
+          force: true
