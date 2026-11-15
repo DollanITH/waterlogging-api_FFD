@@ -1,5 +1,7 @@
 package dev.xy177.waterlogged.api;
 
+import net.minecraft.block.Block;
+import net.minecraft.block.properties.PropertyBool;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.math.BlockPos;
@@ -7,11 +9,61 @@ import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
 import net.minecraftforge.fluids.Fluid;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
 
-/** Stable third-party integration surface. Runtime implementation is supplied by Waterlogged. */
+/**
+ * Stable third-party integration surface. Runtime implementation is supplied by Waterlogged.
+ *
+ * <p>API 1.1 adds {@link #UNIVERSAL_WATERLOGGED}: a block can append that property in its own
+ * {@code createBlockState()} instead of waiting for the mod to inject it through a mixin.
+ */
 public final class WaterloggedApi {
-    public static final String API_VERSION = "1.0.0";
+    /** Capability version. 1.1 adds the universal property accessor and the per-state support check. */
+    public static final String API_VERSION = "1.1.0";
+
+    /**
+     * The single property instance the runtime uses for waterlogging it adds to a block's state container.
+     * Integrations that build their own container, or that own a {@code waterlogged} property, must use this
+     * same instance so state identity and every runtime check agree.
+     */
+    public static final PropertyBool UNIVERSAL_WATERLOGGED = PropertyBool.create("waterlogged");
+
+    /** Accessor for {@link #UNIVERSAL_WATERLOGGED}; kept as a method so the field can be looked up after init. */
+    public static PropertyBool universalWaterloggedProperty() {
+        return UNIVERSAL_WATERLOGGED;
+    }
+
+    /**
+     * Block classes the runtime should give the universal waterlogged property to, beyond the built-in list.
+     *
+     * <p>State containers are created while the block object is constructed, so this must run before that
+     * block is instantiated. A static initializer placed above the block field in the integration's mod
+     * class is enough:
+     * <pre>{@code
+     * static { WaterloggedApi.registerUniversalWaterloggableBlock(MyBlock.class); }
+     * public static final Block MY_BLOCK = new MyBlock();
+     * }</pre>
+     */
+    private static final Set<Class<?>> EXPLICIT_UNIVERSAL_CLASSES =
+            Collections.newSetFromMap(new IdentityHashMap<>());
+
+    public static void registerUniversalWaterloggableBlock(Class<? extends Block> blockClass) {
+        if (blockClass != null) {
+            EXPLICIT_UNIVERSAL_CLASSES.add(blockClass);
+        }
+    }
+
+    public static void unregisterUniversalWaterloggableBlock(Class<? extends Block> blockClass) {
+        EXPLICIT_UNIVERSAL_CLASSES.remove(blockClass);
+    }
+
+    public static boolean isUniversalWaterloggableBlock(Class<?> blockClass) {
+        return blockClass != null && EXPLICIT_UNIVERSAL_CLASSES.contains(blockClass);
+    }
+
     private static volatile Provider provider;
     private static final List<Adapter> PENDING_ADAPTERS = new ArrayList<>();
     private static final List<FluidMixRule> PENDING_RULES = new ArrayList<>();

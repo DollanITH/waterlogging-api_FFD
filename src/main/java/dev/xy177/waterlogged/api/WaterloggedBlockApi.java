@@ -46,8 +46,9 @@ import dev.xy177.waterlogged.common.fluid.FFDFluidloggedData;
 import dev.xy177.waterlogged.common.fluid.FFDStoredFluidStates;
 
 public final class WaterloggedBlockApi {
+    /** Shared with the api artifact so integrations can build their own containers with the same instance. */
     public static final PropertyBool UNIVERSAL_WATERLOGGED =
-            new UniversalWaterloggedProperty();
+            WaterloggedApi.UNIVERSAL_WATERLOGGED;
     private static final Set<Block> RENDERED_BLOCKS =
             Collections.newSetFromMap(new IdentityHashMap<Block, Boolean>());
     private static final Set<Block> WATER_COLOR_BLOCKS =
@@ -179,6 +180,24 @@ public final class WaterloggedBlockApi {
         return false;
     }
 
+    /**
+     * Resolve a {@code waterlogged} property that the block declares itself. A block that ships its own
+     * property does not get the universal one injected (the injector skips an existing same-named property),
+     * so identity checks alone would report such a block as not waterloggable.
+     */
+    @Nullable
+    public static PropertyBool findOwnWaterloggedProperty(IBlockState state) {
+        if (state == null) {
+            return null;
+        }
+        for (IProperty<?> property : state.getPropertyKeys()) {
+            if ("waterlogged".equals(property.getName()) && property instanceof PropertyBool) {
+                return (PropertyBool) property;
+            }
+        }
+        return null;
+    }
+
     public static IProperty<?>[] appendUniversalWaterloggedProperty(
             Block block, IProperty<?>[] properties) {
         if (!WaterloggedConfig.isWaterloggingEnabled()
@@ -253,6 +272,11 @@ public final class WaterloggedBlockApi {
     }
 
     private static boolean supportsUniversalWaterlogging(Block block) {
+        // Integrations may opt their own block class in before it is constructed; the state container is
+        // built during construction, so an instanceof list alone can never cover third-party blocks.
+        if (WaterloggedApi.isUniversalWaterloggableBlock(block.getClass())) {
+            return true;
+        }
         if (block.getClass().getName().equals(
                 "thedarkcolour.futuremc.block.villagepillage.BlockWall")) {
             return true;
@@ -910,14 +934,4 @@ public final class WaterloggedBlockApi {
         return Math.max(1, fluid.getBlock().tickRate(world));
     }
 
-    private static final class UniversalWaterloggedProperty extends PropertyBool {
-        private UniversalWaterloggedProperty() {
-            super("waterlogged");
-        }
-
-        @Override
-        public Collection<Boolean> getAllowedValues() {
-            return Arrays.asList(Boolean.FALSE, Boolean.TRUE);
-        }
-    }
 }

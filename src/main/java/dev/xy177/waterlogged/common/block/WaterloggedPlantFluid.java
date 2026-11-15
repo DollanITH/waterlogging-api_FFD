@@ -19,6 +19,7 @@ import net.minecraft.block.BlockSponge;
 import net.minecraft.block.BlockTrapDoor;
 import net.minecraft.block.BlockLeaves;
 import net.minecraft.block.properties.IProperty;
+import net.minecraft.block.properties.PropertyBool;
 import net.minecraft.block.material.Material;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.init.Blocks;
@@ -169,11 +170,16 @@ public final class WaterloggedPlantFluid {
             return ((IWaterloggableBlock) block).isWaterloggedState(state);
         }
         boolean universal = WaterloggedBlockApi.hasUniversalWaterloggedProperty(state);
-        if ((!universal && adapterSnapshot.length == 0) || !WaterloggedConfig.isWaterloggingEnabled()) {
+        PropertyBool own = universal ? null : WaterloggedBlockApi.findOwnWaterloggedProperty(state);
+        if ((!universal && own == null && adapterSnapshot.length == 0)
+                || !WaterloggedConfig.isWaterloggingEnabled()) {
             return false;
         }
         if (universal) {
             return state.getValue(WaterloggedBlockApi.UNIVERSAL_WATERLOGGED);
+        }
+        if (own != null) {
+            return state.getValue(own);
         }
         return adapterIsWaterlogged(state);
     }
@@ -674,13 +680,19 @@ public final class WaterloggedPlantFluid {
         }
         Block block = state.getBlock();
         if (block instanceof IWaterloggableBlock) {
-            return ((IWaterloggableBlock) block).setWaterloggedState(state, waterlogged);
+            IWaterloggableBlock waterloggable = (IWaterloggableBlock) block;
+            return waterloggable.supportsWaterlogging(state)
+                    ? waterloggable.setWaterloggedState(state, waterlogged) : null;
         }
         if (!WaterloggedConfig.isWaterloggingEnabled()) {
             return null;
         }
         if (WaterloggedBlockApi.hasUniversalWaterloggedProperty(state)) {
             return state.withProperty(WaterloggedBlockApi.UNIVERSAL_WATERLOGGED, waterlogged);
+        }
+        PropertyBool own = WaterloggedBlockApi.findOwnWaterloggedProperty(state);
+        if (own != null) {
+            return state.withProperty(own, waterlogged);
         }
         WaterloggedBlockApi.Adapter[] adapters = adapterSnapshot;
         if (adapters.length == 0 || Boolean.TRUE.equals(IN_ADAPTER_CALLBACK.get())) {
