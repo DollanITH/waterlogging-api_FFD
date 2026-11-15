@@ -168,6 +168,9 @@ public final class WaterloggedBlockApi {
         if (state == null) {
             return false;
         }
+        if (!state.getProperties().containsKey(UNIVERSAL_WATERLOGGED)) {
+            return false;
+        }
         for (IProperty<?> property : state.getPropertyKeys()) {
             if (property == UNIVERSAL_WATERLOGGED) {
                 return true;
@@ -250,6 +253,10 @@ public final class WaterloggedBlockApi {
     }
 
     private static boolean supportsUniversalWaterlogging(Block block) {
+        if (block.getClass().getName().equals(
+                "thedarkcolour.futuremc.block.villagepillage.BlockWall")) {
+            return true;
+        }
         if (block instanceof BlockStairs || block instanceof BlockFence
                 || block instanceof BlockWall || block instanceof BlockPane
                 || block instanceof BlockTrapDoor || block instanceof BlockLadder

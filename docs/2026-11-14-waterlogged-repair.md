@@ -125,7 +125,14 @@ Date: 2026-11-14
 - Added an `api` Gradle subproject publishing `dev.xy177.waterlogged:waterlogged-api:0.1.0`, with separate source and remapped jars.
 - The artifact owns `IWaterloggableBlock` and the stable `WaterloggedApi` registration/query contracts. It contains no direct reference to Waterlogged implementation classes; the main mod installs a provider during pre-initialization.
 - Adapter and fluid-rule registrations are queued until provider installation and bridge by identity so duplicate registration and unregistration behave predictably. The old `WaterloggedBlockApi` remains in the mod jar as a compatibility facade.
-- The main jar excludes only API-owned classes; it keeps the compatibility facade. API installation and usage guidance is in `docs/waterlogged-api.md`.
-- `gradlew.bat build :api:publishToMavenLocal` passed. The published POM now has the remapped jar as its default artifact plus a sources jar; the artifact is present under `dev.xy177.waterlogged:waterlogged-api:0.1.0` in Maven Local.
-- Jar inspection confirmed the main mod keeps `WaterloggedBlockApi` and excludes `WaterloggedApi`/`IWaterloggableBlock`, while the separate API jar contains those public contracts.
+- The main jar includes the API classes for runtime compatibility; the separate artifact is provided for third-party compile-time use. API installation and usage guidance is in `docs/waterlogged-api.md`.
+- `gradlew.bat build :api:publishToMavenLocal` passed. The published POM has the remapped jar as its default artifact plus a sources jar; the artifact is present under `dev.xy177.waterlogged:waterlogged-api:0.1.0` in Maven Local.
+- Explicitly includes the API subproject's compiled output in the main jar. A follow-up jar inspection showed that removing exclusions alone did not package dependency-project classes.
 - Fresh `runClient` reached successful loading of 14 mods. This verifies development runtime class loading and mod startup, not a third-party mod build or integration acceptance. Existing unrelated FutureMC model warnings appeared during startup.
+
+## 2026-11-15 FutureMC wall waterlogging adapter
+
+- FutureMC's `BlockWall` mixin previously created a private `PropertyBool` that was never inserted into the wall's `BlockStateContainer`; its `getValue`/`withProperty` path therefore could not reliably represent a persisted waterlogged state.
+- FutureMC `thedarkcolour.futuremc.block.villagepillage.BlockWall` is now included in the common universal-property injection path. `MixinBlockWall` reads and writes the shared `WaterloggedBlockApi.UNIVERSAL_WATERLOGGED` property and safely returns `null` if a state lacks the property.
+- `gradlew.bat build` passed. In-game FutureMC wall placement, save/reload, sponge absorption, and fluid spread still require gameplay verification.
+- The Mixin config plugin checks for `thedarkcolour.futuremc.FutureMC` without initializing it, and applies the wall mixin only when that mod marker class is present; `compileJava` passed.

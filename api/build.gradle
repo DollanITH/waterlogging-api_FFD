@@ -29,6 +29,18 @@ tasks.named('jar', Jar) {
 }
 
 publishing {
+    repositories {
+        // 本地暂存仓库：GitHub Actions 先发布到这里，再把目录推到 gh-pages 分支，
+        // 由 GitHub Pages 提供为 https://dollanith.github.io/waterlogging-api_FFD/
+        // 本地想验证发布内容时也可以直接跑这个仓库的任务，产物在 <root>/build/gh-pages。
+        maven {
+            name = 'Pages'
+            url = rootProject.layout.buildDirectory.dir('gh-pages')
+        }
+        if (publish_to_local_maven.toBoolean()) {
+            mavenLocal()
+        }
+    }
     publications {
         api(MavenPublication) {
             groupId = 'dev.xy177.waterlogged'
